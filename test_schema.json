@@ -1,0 +1,7 @@
+{
+  "columns": [
+    {"name": "id", "type": "INT"},
+    {"name": "email", "type": "STRING"},
+    {"name": "created_at", "type": "TIMESTAMP"}
+  ]
+}
