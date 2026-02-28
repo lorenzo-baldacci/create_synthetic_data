@@ -28,6 +28,7 @@ def main():
     parser.add_argument("--schema-file", required=True, help="Path to JSON schema file")
     parser.add_argument("--rows", type=int, default=1000, help="Number of rows to generate (default: 1000)")
     parser.add_argument("--profile", default="AZURE_FE", help="Databricks config profile (default: AZURE_FE)")
+    parser.add_argument("--cluster-id", default=None, help="Databricks cluster ID (uses serverless if omitted)")
     args = parser.parse_args()
 
     # 1. Parse schema file
@@ -45,8 +46,14 @@ def main():
     ensure_schema(ws, args.catalog, args.schema)
 
     # 3. Init Spark via Databricks Connect
-    print("Connecting to Databricks cluster via Databricks Connect...")
-    spark = DatabricksSession.builder.profile(args.profile).getOrCreate()
+    builder = DatabricksSession.builder.profile(args.profile)
+    if args.cluster_id:
+        print(f"Connecting to cluster {args.cluster_id} via Databricks Connect...")
+        builder = builder.clusterId(args.cluster_id)
+    else:
+        print("Connecting via Databricks Connect (serverless)...")
+        builder = builder.serverless(True)
+    spark = builder.getOrCreate()
 
     full_table = f"`{args.catalog}`.`{args.schema}`.`{args.table}`"
 
@@ -62,7 +69,13 @@ def main():
     print(f"Generating {args.rows} rows of synthetic data...")
     pdf = generate_dataframe(col_tuples, args.rows)
 
-    # 6. Write to table
+    # 6. Fix timezone-naive datetimes — Spark TimestampType requires UTC-aware timestamps
+    import pandas as pd
+    for col_name, col_type in col_tuples:
+        if col_type.upper() == "TIMESTAMP":
+            pdf[col_name] = pd.to_datetime(pdf[col_name]).dt.tz_localize("UTC")
+
+    # 7. Write to table
     print("Writing data to Delta table...")
     spark.createDataFrame(pdf, schema=struct_type).write.mode("append").saveAsTable(
         f"{args.catalog}.{args.schema}.{args.table}"
